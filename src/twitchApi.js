@@ -147,9 +147,9 @@ export async function getBotUserId() {
  * @param {string} moderatorId - The bot's user ID
  */
 export async function triggerNativeShoutout(fromBroadcasterId, toBroadcasterId, moderatorId) {
-  // Use the user OAuth token from .env (strip oauth: prefix)
-  const userToken = (process.env.TWITCH_OAUTH_TOKEN || '').replace(/^oauth:/i, '');
-  if (!userToken) throw new Error('No user OAuth token available');
+  // Use the dedicated user OAuth token (with moderator:manage:shoutouts scope)
+  const userToken = process.env.TWITCH_USER_OAUTH || '';
+  if (!userToken) throw new Error('No TWITCH_USER_OAUTH set — generate one with moderator:manage:shoutouts scope');
 
   const res = await fetch('https://api.twitch.tv/helix/chat/shoutouts', {
     method: 'POST',
