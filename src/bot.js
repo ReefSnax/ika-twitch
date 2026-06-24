@@ -8,7 +8,7 @@ import {
   generateShowstarter,
   generateCelebration,
 } from './ai.js';
-import { lookupShoutoutData } from './twitchApi.js';
+import { lookupShoutoutData, getUserInfo, getBotUserId, triggerNativeShoutout } from './twitchApi.js';
 import { StreamStatus } from './streamStatus.js';
 import { ChatBuffer } from './chatBuffer.js';
 import { LurkTracker } from './lurkTracker.js';
@@ -17,6 +17,13 @@ import { MilestoneTracker } from './milestones.js';
 // Names Ika should respond to in chat
 // Uses word boundaries so "Pikachu" doesn't trigger but "@ika" / "ika?" / "ikaexe" do.
 const IKA_TRIGGER_REGEX = /\b(?:ika|ikaexe|ikazuchi)\b/i;
+
+// Detect native /shoutout system messages from Twitch
+// Pattern: "<name> shouted out <target>!" or "<name> is giving a Shoutout to <target>!"
+const SHOUTOUT_SYSTEM_REGEX = /shout(?:ed\s+out|out)\s+([A-Za-z]\w{2,24})/i;
+
+// Track usernames we just shouted out via !shoutout so we don't double-respond
+const RECENT_SO = new Set();
 
 export class TwitchBot {
   constructor() {
@@ -79,6 +86,17 @@ export class TwitchBot {
         const target = shoutoutMatch[1];
         this._handleShoutout(channel, username, target);
         return;
+      }
+
+      // Detect native /shoutout system message from Twitch
+      if (SHOUTOUT_SYSTEM_REGEX.test(message)) {
+        const target = message.match(SHOUTOUT_SYSTEM_REGEX)[1].toLowerCase();
+        // Don't double-respond if we triggered it ourselves
+        if (RECENT_SO.has(target)) {
+          RECENT_SO.delete(target);
+        } else {
+          this._handleNativeShoutout(channel, target);
+        }
       }
 
       // Check if Ika is being addressed (word-boundary match, so "Pikachu" won't trigger)
@@ -190,6 +208,32 @@ export class TwitchBot {
     try {
       console.log(`[IkaEXE] Shoutout requested by ${requester} for ${target}`);
 
+      // Mark as recently triggered so the system-message detector skips it
+      RECENT_SO.add(target.toLowerCase());
+      setTimeout(() => RECENT_SO.delete(target.toLowerCase()), 5000);
+
+      // Try to trigger native Twitch /shoutout via API first
+      try {
+        const botId = await getBotUserId();
+        const [chUser, tgUser] = await Promise.all([
+          getUserInfo(this.channel.replace('#', '')),
+          getUserInfo(target),
+        ]);
+        if (botId && chUser && tgUser) {
+          await triggerNativeShoutout(tgUser.id, chUser.id, botId);
+          console.log(`[IkaEXE] Native shoutout triggered via API for ${target}`);
+        }
+      } catch (apiErr) {
+        // If API fails (wrong scope, not a mod, etc.), fall back to IRC command
+        console.log(`[IkaEXE] API shoutout failed, trying IRC: ${apiErr.message}`);
+        try {
+          await this.client.say(this.channel, `/shoutout ${target}`);
+        } catch (ircErr) {
+          console.log(`[IkaEXE] IRC shoutout also failed: ${ircErr.message}`);
+        }
+      }
+
+      // Now post the AI-generated shoutout message
       const data = await lookupShoutoutData(target);
       const shoutout = await generateShoutout(data);
 
@@ -203,6 +247,20 @@ export class TwitchBot {
       } else {
         await this._say(`@${requester}, sorry — shoutout glitched. Try again in a bit!`);
       }
+    }
+  }
+
+  async _handleNativeShoutout(channel, target) {
+    try {
+      console.log(`[IkaEXE] Detected native shoutout for ${target}`);
+      const data = await lookupShoutoutData(target);
+      const shoutout = await generateShoutout(data);
+      const message = `Check out ${target} over at https://twitch.tv/${target} — ${shoutout}`;
+      const trimmed = message.slice(0, 490);
+      await this._say(trimmed);
+    } catch (err) {
+      console.error(`[IkaEXE] Native shoutout response failed for ${target}:`, err.message);
+      // Silently fail — don't spam chat with error messages
     }
   }
 

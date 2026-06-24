@@ -120,3 +120,53 @@ export async function lookupShoutoutData(login) {
     pronouns,
   };
 }
+
+/**
+ * Get the bot's own Twitch user ID using the app token.
+ * Cached after first lookup.
+ */
+let _botUserId = null;
+let _botUserIdExpiry = 0;
+export async function getBotUserId() {
+  if (_botUserId && Date.now() < _botUserIdExpiry) return _botUserId;
+  const user = await getUserInfo(process.env.TWITCH_BOT_USERNAME);
+  if (user) {
+    _botUserId = user.id;
+    _botUserIdExpiry = Date.now() + 3600_000; // cache 1 hour
+  }
+  return _botUserId;
+}
+
+/**
+ * Trigger a native Twitch /shoutout via the Helix API.
+ * Requires a user access token with moderator:manage:shoutouts scope.
+ * The bot must be a moderator of the target broadcaster's channel.
+ *
+ * @param {string} fromBroadcasterId - The broadcaster being shouted out
+ * @param {string} toBroadcasterId - The channel where the shoutout happens
+ * @param {string} moderatorId - The bot's user ID
+ */
+export async function triggerNativeShoutout(fromBroadcasterId, toBroadcasterId, moderatorId) {
+  // Use the user OAuth token from .env (strip oauth: prefix)
+  const userToken = (process.env.TWITCH_OAUTH_TOKEN || '').replace(/^oauth:/i, '');
+  if (!userToken) throw new Error('No user OAuth token available');
+
+  const res = await fetch('https://api.twitch.tv/helix/chat/shoutouts', {
+    method: 'POST',
+    headers: {
+      'Client-ID': process.env.TWITCH_CLIENT_ID,
+      Authorization: `Bearer ${userToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from_broadcaster_id: fromBroadcasterId,
+      to_broadcaster_id: toBroadcasterId,
+      moderator_id: moderatorId,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Shoutout API ${res.status}: ${body}`);
+  }
+}
