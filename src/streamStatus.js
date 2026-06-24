@@ -6,9 +6,20 @@
 export class StreamStatus {
   constructor() {
     this.isLive = false;
+    this._prevLive = null; // null = unknown (first check)
     this.accessToken = null;
     this.tokenExpiry = 0;
     this.pollInterval = null;
+    /** @type {Set<function>} */
+    this._liveChangeCallbacks = new Set();
+  }
+
+  /**
+   * Register a callback for live-status changes.
+   * Callback receives (isLive: boolean).
+   */
+  onLiveChange(callback) {
+    this._liveChangeCallbacks.add(callback);
   }
 
   async getAppToken() {
@@ -46,7 +57,17 @@ export class StreamStatus {
         }
       );
       const data = await res.json();
-      this.isLive = data.data?.length > 0;
+      const nowLive = data.data?.length > 0;
+      this.isLive = nowLive;
+
+      // Fire callbacks on status change (skip first check — that's initialization)
+      if (this._prevLive !== null && nowLive !== this._prevLive) {
+        console.log(`[StreamStatus] Live status changed: ${this._prevLive} -> ${nowLive}`);
+        for (const cb of this._liveChangeCallbacks) {
+          try { cb(nowLive); } catch (e) { console.error('[StreamStatus] Callback error:', e.message); }
+        }
+      }
+      this._prevLive = nowLive;
     } catch (err) {
       console.error('[StreamStatus] Failed to check live status:', err.message);
       // Don't flip isLive on error -- assume current state is still valid

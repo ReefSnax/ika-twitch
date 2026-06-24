@@ -1,8 +1,18 @@
 import tmi from 'tmi.js';
-import { generateEventResponse, generateChatResponse, generateShoutout } from './ai.js';
+import {
+  generateEventResponse,
+  generateChatResponse,
+  generateShoutout,
+  generateLurkResponse,
+  generateReturnResponse,
+  generateShowstarter,
+  generateCelebration,
+} from './ai.js';
 import { lookupShoutoutData } from './twitchApi.js';
 import { StreamStatus } from './streamStatus.js';
 import { ChatBuffer } from './chatBuffer.js';
+import { LurkTracker } from './lurkTracker.js';
+import { MilestoneTracker } from './milestones.js';
 
 // Names Ika should respond to in chat
 // Uses word boundaries so "Pikachu" doesn't trigger but "@ika" / "ika?" / "ikaexe" do.
@@ -23,7 +33,15 @@ export class TwitchBot {
       channels: [this.channel],
     });
 
+    this.lurkTracker = new LurkTracker();
+    this.milestones = new MilestoneTracker();
+
     this._bindEvents();
+
+    // Wire showstarter — fires when stream goes live
+    this.streamStatus.onLiveChange((isLive) => {
+      if (isLive) this._handleShowstarter();
+    });
   }
 
   _bindEvents() {
@@ -41,6 +59,19 @@ export class TwitchBot {
 
       const username = tags['display-name'] || tags.username;
       this.chatBuffer.add(username, message);
+
+      // Check for !lurk command
+      const lurkMatch = message.match(/^!lurk\b/i);
+      if (lurkMatch) {
+        this._handleLurk(channel, username);
+        return;
+      }
+
+      // Check if a lurker has returned — one-time welcome back
+      if (this.lurkTracker.checkReturn(username)) {
+        this._handleReturn(channel, username);
+        // Don't return — let them still trigger other commands
+      }
 
       // Check for !shoutout command
       const shoutoutMatch = message.match(/^!shoutout\s+(\w+)/i);
@@ -71,6 +102,7 @@ export class TwitchBot {
         tier: this._parseTier(method?.plan),
         message,
       });
+      this._checkSubMilestone();
     });
 
     this.client.on('resub', (channel, username, months, message, userstate, methods) => {
@@ -82,6 +114,7 @@ export class TwitchBot {
         tier: this._parseTier(methods?.plan),
         message,
       });
+      this._checkSubMilestone();
     });
 
     this.client.on('subgift', (channel, username, streakMonths, recipient, methods, userstate) => {
@@ -91,6 +124,7 @@ export class TwitchBot {
         recipient,
         count: 1,
       });
+      this._checkSubMilestone();
     });
 
     this.client.on('submysterygift', (channel, username, numbOfSubs, methods, userstate) => {
@@ -100,6 +134,10 @@ export class TwitchBot {
         recipient: null,
         count: numbOfSubs,
       });
+      // Track each gifted sub as a milestone increment
+      for (let i = 0; i < numbOfSubs; i++) {
+        this._checkSubMilestone();
+      }
     });
 
     // --- Bits ---
@@ -168,6 +206,58 @@ export class TwitchBot {
     }
   }
 
+  async _handleLurk(channel, username) {
+    try {
+      const response = await generateLurkResponse(username);
+      const trimmed = response.slice(0, 490);
+      await this._say(trimmed);
+      this.lurkTracker.startLurk(username);
+      console.log(`[IkaEXE] ${username} is now lurking`);
+    } catch (err) {
+      console.error('[IkaEXE] Error handling !lurk:', err.message);
+    }
+  }
+
+  async _handleReturn(channel, username) {
+    try {
+      const response = await generateReturnResponse(username);
+      const trimmed = response.slice(0, 490);
+      await this._say(trimmed);
+      console.log(`[IkaEXE] ${username} returned from lurking`);
+    } catch (err) {
+      console.error('[IkaEXE] Error handling lurk return:', err.message);
+    }
+  }
+
+  async _handleShowstarter() {
+    try {
+      const response = await generateShowstarter();
+      const trimmed = response.slice(0, 490);
+      await this._say(trimmed);
+      console.log('[IkaEXE] Showstarter fired — stream is live!');
+    } catch (err) {
+      console.error('[IkaEXE] Error handling showstarter:', err.message);
+    }
+  }
+
+  async _handleCelebration(type, milestone) {
+    try {
+      const response = await generateCelebration(type, milestone);
+      const trimmed = response.slice(0, 490);
+      await this._say(trimmed);
+      console.log(`[IkaEXE] ${type} milestone ${milestone} celebrated!`);
+    } catch (err) {
+      console.error('[IkaEXE] Error handling celebration:', err.message);
+    }
+  }
+
+  _checkSubMilestone() {
+    const milestone = this.milestones.recordSub();
+    if (milestone) {
+      this._handleCelebration('sub', milestone);
+    }
+  }
+
   async _say(message) {
     try {
       await this.client.say(this.channel, message);
@@ -187,6 +277,12 @@ export class TwitchBot {
    */
   onFollow(username) {
     this._handleEvent('follow', { username });
+
+    // Milestone tracking
+    const milestone = this.milestones.recordFollow();
+    if (milestone) {
+      this._handleCelebration('follow', milestone);
+    }
   }
 
   async connect() {

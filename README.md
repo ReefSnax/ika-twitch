@@ -9,7 +9,7 @@ A modular Twitch chat bot for the **ReefSnax** channel. Built with Node.js, tmi.
 ### Event Responses (AI-generated)
 | Event | Trigger | Behavior |
 |-------|---------|----------|
-| **Follow** | EventSub webhook relay | Personalized welcome — avoids generic "thanks for the follow" |
+| **Follow** | EventSub webhook relay | Warm, personalized welcome that references channel content |
 | **Sub / Resub** | IRC subscription events | Acknowledges tier, streak, and sub message if present |
 | **Sub Gift / Mystery Gift** | IRC events | Thanks the gifter, mentions recipient if known |
 | **Bits / Cheers** | IRC cheer events | Recognizes the contribution naturally |
@@ -24,6 +24,30 @@ A modular Twitch chat bot for the **ReefSnax** channel. Built with Node.js, tmi.
 - Generates a personalized shoutout via Claude
 - **Safeguards:** Never mentions politics, ethnicity, race, gender identity, or anything sensitive — sticks to content and vibe
 - Falls back cleanly if the user doesn't exist
+
+### !lurk and Lurker Love
+`!lurk` — declares that you're lurking. The bot sends a playful acknowledgment. When you speak in chat again, you get a one-time "welcome back from the deep" message.
+
+- Lurk state is per-session (in-memory, resets if the bot restarts)
+- Welcome-back only fires once per lurk session
+
+### Showstarter
+When the stream goes live, the bot automatically posts a "we're live!" announcement — energetic, themed to ReefSnax's channel, welcoming viewers old and new.
+
+- Detected via the StreamStatus module (Helix API polling every 60s)
+- Only fires on a `false → true` transition
+
+### Custom Celebrations
+Milestone celebrations for follows and subs. When the bot sees enough events to cross a milestone threshold, it fires a community-wide thank-you message.
+
+| Type | Milestones |
+|------|------------|
+| **Follows** | 50, 100, 250, 500, 750, 1000, 1500, 2000, 2500, 5000 |
+| **Subs** | 10, 25, 50, 100, 150, 200, 250, 500, 1000 |
+
+- Counts are persisted across bot restarts via `milestone-state.json`
+- Each milestone only celebrates once
+- Skips events when the stream is offline (except follows, which come via EventSub)
 
 ### Systemd Service
 Runs as a managed systemd service (`ika-twitch.service`) with automatic restart on failure.
@@ -115,12 +139,15 @@ ika-twitch/
 ├── src/
 │   ├── index.js            # Entry point — wires up bot + EventSub relay
 │   ├── bot.js              # TwitchBot class — IRC client, event handlers, command routing
-│   ├── ai.js               # Claude API calls — event responses, chat, shoutouts
+│   ├── ai.js               # Claude API calls — event responses, chat, shoutouts, lurk, showstarter, celebrations
 │   ├── twitchApi.js        # Twitch Helix API — user lookup, stream info, pronoun detection
 │   ├── persona.js          # IkaEXE system prompts for Claude
-│   ├── streamStatus.js     # Periodic live-status polling via Helix API
+│   ├── streamStatus.js     # Periodic live-status polling via Helix API + change callbacks
 │   ├── chatBuffer.js       # Rolling message buffer for chat context
-│   └── eventSubRelay.js    # EventSub webhook server (follow events)
+│   ├── eventSubRelay.js    # EventSub webhook server (follow events)
+│   ├── lurkTracker.js      # In-memory lurk state tracking
+│   └── milestones.js       # Persistent milestone counter (follows, subs)
+├── milestone-state.json    # Auto-generated milestone state
 ├── scripts/
 │   └── ika-twitch.service  # systemd unit file
 ├── .env.example            # Environment variable template
@@ -149,6 +176,8 @@ Three exported functions:
 
 All use Claude Sonnet 4.6 (`claude-sonnet-4-6`).
 
+Newer functions: `generateLurkResponse`, `generateReturnResponse`, `generateShowstarter`, `generateCelebration`.
+
 #### `src/twitchApi.js`
 Helix API wrappers:
 - `getUserInfo(login)` — profile data
@@ -160,6 +189,12 @@ Helix API wrappers:
 #### `src/persona.js`
 System prompts that define IkaEXE's character: a squid-type Net Navi assigned to operator ReefSnax. Warm, confident, concise. Uses light Battle Network terminology.
 
+#### `src/lurkTracker.js`
+In-memory set-based tracker for the `!lurk` command. Tracks which users are currently lurking (lowercased). Offers `startLurk()` to register, and `checkReturn()` to atomically test-and-remove (returns true if they were lurking, meaning they should get a welcome-back message).
+
+#### `src/milestones.js`
+Persistent milestone tracker for follows and subs. Stores counts in `milestone-state.json`. `recordFollow()` / `recordSub()` increment the counter and return the milestone number if a threshold was just crossed, or null otherwise. Each milestone only fires once.
+
 ---
 
 ## Usage
@@ -169,7 +204,11 @@ System prompts that define IkaEXE's character: a squid-type Net Navi assigned to
 | Command | Example | Description |
 |---------|---------|-------------|
 | `!shoutout <user>` | `!shoutout djparticle` | Generates a personalized shoutout |
+| `!lurk` | `!lurk` | Declare lurking — get a welcome-back when you chat again |
 | @mention Ika | `@ika hello!` | Ika responds in character |
+
+### Showstarter
+The showstarter fires automatically when the stream goes live — no command needed. The bot detects the `offline → live` transition via the Helix API polling.
 
 ### EventSub Setup (Follow Events)
 
