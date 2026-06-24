@@ -74,7 +74,7 @@ export class TwitchBot {
       }
 
       // Check for !shoutout command
-      const shoutoutMatch = message.match(/^!shoutout\s+(\w+)/i);
+      const shoutoutMatch = message.match(/^!shoutout\s+@?(\w+)/i);
       if (shoutoutMatch) {
         const target = shoutoutMatch[1];
         this._handleShoutout(channel, username, target);
