@@ -1,0 +1,16 @@
+{
+  "name": "ika-twitch",
+  "version": "1.0.0",
+  "description": "IkaEXE Twitch bot for ReefSnax",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "dotenv": "^16.3.1",
+    "tmi.js": "^1.8.5"
+  }
+}
