@@ -4,7 +4,7 @@
  * Used to give Ika context when responding to direct mentions.
  */
 export class ChatBuffer {
-  constructor(maxMessages = 20) {
+  constructor(maxMessages = 40) {
     this.maxMessages = maxMessages;
     this.messages = [];
   }
