@@ -1,6 +1,6 @@
 # IkaEXE Twitch Bot
 
-A modular Twitch chat bot for the **ReefSnax** channel. Built with Node.js, tmi.js (IRC), and Claude (Anthropic) for AI-generated event responses, chat interactions, and personalized shoutouts.
+A modular Twitch chat bot for the **ReefSnax** channel (Snax's stream). Built with Node.js, tmi.js (IRC), and Claude (Anthropic) for AI-generated event responses, chat interactions, and personalized shoutouts.
 
 ---
 
@@ -9,12 +9,12 @@ A modular Twitch chat bot for the **ReefSnax** channel. Built with Node.js, tmi.
 ### Event Responses (AI-generated)
 | Event | Trigger | Behavior |
 |-------|---------|----------|
-| **Follow** | EventSub webhook relay | Warm, personalized welcome that references channel content |
+| **Follow** | EventSub webhook relay | Warm, personalized welcome — aware of recent chat vibe |
 | **Sub / Resub** | IRC subscription events | Acknowledges tier, streak, and sub message if present |
 | **Sub Gift / Mystery Gift** | IRC events | Thanks the gifter, mentions recipient if known |
 | **Bits / Cheers** | IRC cheer events | Recognizes the contribution naturally |
 | **Raids** | IRC raid event | Welcomes the raiding community, addresses raid leader by name |
-| **Chat Mentions** | Word-boundary regex (`ika`, `ikaexe`, `ikazuchi`) | Responds in-character using recent chat context |
+| **Chat Mentions** | Word-boundary regex (`ika`, `ikaexe`, `ikazuchi`) | Responds in-character using last 20 chat messages for context |
 
 ### !shoutout Command
 `!shoutout <username>` — generates a unique, friendly one-sentence recommendation:
@@ -32,10 +32,11 @@ A modular Twitch chat bot for the **ReefSnax** channel. Built with Node.js, tmi.
 - Welcome-back only fires once per lurk session
 
 ### Showstarter
-When the stream goes live, the bot automatically posts a "we're live!" announcement — energetic, themed to ReefSnax's channel, welcoming viewers old and new.
+When the stream goes live, the bot automatically posts a "we're live!" announcement — energetic, welcoming viewers old and new, and referencing whatever game Snax is actually playing.
 
 - Detected via the StreamStatus module (Helix API polling every 60s)
 - Only fires on a `false → true` transition
+- References the actual title and game being streamed
 
 ### Custom Celebrations
 Milestone celebrations for follows and subs. When the bot sees enough events to cross a milestone threshold, it fires a community-wide thank-you message.
@@ -169,14 +170,16 @@ Core bot logic. Listens for:
 - **Follows** — relayed from EventSub server
 
 #### `src/ai.js`
-Three exported functions:
-- `generateEventResponse(type, context)` — event-specific prompts
-- `generateChatResponse(messages)` — responds to direct mentions with chat history
+Seven exported functions:
+- `generateEventResponse(type, context)` — event-specific prompts, receives optional chat vibe context
+- `generateChatResponse(messages)` — responds to direct mentions with last 20 chat messages
 - `generateShoutout(data)` — generates personalized shoutout from user profile data
+- `generateLurkResponse(username, chatContext)` — acknowledges a lurker
+- `generateReturnResponse(username, chatContext)` — one-time "welcome back" for returning lurkers
+- `generateShowstarter(stream)` — "we're live!" announcement referencing the actual stream title/game
+- `generateCelebration(type, milestone, chatContext)` — milestone thank-yous
 
-All use Claude Sonnet 4.6 (`claude-sonnet-4-6`).
-
-Newer functions: `generateLurkResponse`, `generateReturnResponse`, `generateShowstarter`, `generateCelebration`.
+All use Claude Sonnet 4 (`claude-sonnet-4-6`).
 
 #### `src/twitchApi.js`
 Helix API wrappers:
@@ -187,7 +190,7 @@ Helix API wrappers:
 - `lookupShoutoutData(login)` — composite lookup for the shoutout command
 
 #### `src/persona.js`
-System prompts that define IkaEXE's character: a squid-type Net Navi assigned to operator ReefSnax. Warm, confident, concise. Uses light Battle Network terminology.
+System prompts that define IkaEXE's character: a squid-type Net Navi assigned to Snax. Warm, confident, concise. Uses light Battle Network terminology. Channel context is variety gaming — no hardcoded genre assumptions.
 
 #### `src/lurkTracker.js`
 In-memory set-based tracker for the `!lurk` command. Tracks which users are currently lurking (lowercased). Offers `startLurk()` to register, and `checkReturn()` to atomically test-and-remove (returns true if they were lurking, meaning they should get a welcome-back message).

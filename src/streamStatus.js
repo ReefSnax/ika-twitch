@@ -1,11 +1,12 @@
 /**
  * StreamStatus
  * Polls the Twitch Helix API to check if the channel is live.
- * Used to gate certain event responses (raids, subs) to live sessions only.
+ * Stores current stream info (title, game) for the showstarter.
  */
 export class StreamStatus {
   constructor() {
     this.isLive = false;
+    this.currentStream = null; // { title, game } or null
     this._prevLive = null; // null = unknown (first check)
     this.accessToken = null;
     this.tokenExpiry = 0;
@@ -16,7 +17,7 @@ export class StreamStatus {
 
   /**
    * Register a callback for live-status changes.
-   * Callback receives (isLive: boolean).
+   * Callback receives ({ isLive: boolean, stream: object|null }).
    */
   onLiveChange(callback) {
     this._liveChangeCallbacks.add(callback);
@@ -57,14 +58,27 @@ export class StreamStatus {
         }
       );
       const data = await res.json();
-      const nowLive = data.data?.length > 0;
+      const streamData = data.data?.[0] || null;
+      const nowLive = !!streamData;
+
       this.isLive = nowLive;
+
+      // Store current stream info for showstarter
+      if (streamData) {
+        this.currentStream = {
+          title: streamData.title,
+          game: streamData.game_name,
+        };
+      } else {
+        this.currentStream = null;
+      }
 
       // Fire callbacks on status change (skip first check — that's initialization)
       if (this._prevLive !== null && nowLive !== this._prevLive) {
         console.log(`[StreamStatus] Live status changed: ${this._prevLive} -> ${nowLive}`);
+        const payload = { isLive: nowLive, stream: this.currentStream };
         for (const cb of this._liveChangeCallbacks) {
-          try { cb(nowLive); } catch (e) { console.error('[StreamStatus] Callback error:', e.message); }
+          try { cb(payload); } catch (e) { console.error('[StreamStatus] Callback error:', e.message); }
         }
       }
       this._prevLive = nowLive;

@@ -29,7 +29,7 @@ export class TwitchBot {
   constructor() {
     this.channel = process.env.TWITCH_CHANNEL;
     this.streamStatus = new StreamStatus();
-    this.chatBuffer = new ChatBuffer(20);
+    this.chatBuffer = new ChatBuffer(); // stores 40 messages by default
 
     this.client = new tmi.Client({
       options: { debug: process.env.DEBUG === 'true' },
@@ -46,8 +46,8 @@ export class TwitchBot {
     this._bindEvents();
 
     // Wire showstarter — fires when stream goes live
-    this.streamStatus.onLiveChange((isLive) => {
-      if (isLive) this._handleShowstarter();
+    this.streamStatus.onLiveChange(({ isLive, stream }) => {
+      if (isLive) this._handleShowstarter(stream);
     });
   }
 
@@ -105,11 +105,6 @@ export class TwitchBot {
         this._handleChatMention(channel, username, message);
       }
     });
-
-    // --- Follows ---
-    // tmi.js doesn't receive follows natively; this fires if you set up
-    // EventSub to relay to the bot via a custom event (see README).
-    // For now, handled via the public API relay in eventRelay.js.
 
     // --- Subscriptions ---
     this.client.on('subscription', (channel, username, method, message, userstate) => {
@@ -178,7 +173,14 @@ export class TwitchBot {
   async _handleEvent(type, context) {
     try {
       console.log(`[IkaEXE] Handling event: ${type}`, context);
-      const response = await generateEventResponse(type, context);
+
+      // Attach recent chat as vibe context
+      const chatContext = this.chatBuffer.getContext(20);
+      const response = await generateEventResponse(type, {
+        ...context,
+        chatContext,
+      });
+
       await this._say(response);
     } catch (err) {
       console.error(`[IkaEXE] Error handling ${type} event:`, err.message);
@@ -187,7 +189,7 @@ export class TwitchBot {
 
   async _handleChatMention(channel, username, message) {
     try {
-      const context = this.chatBuffer.getContext(10);
+      const context = this.chatBuffer.getContext(20);
       const messages = [
         ...context,
         {
@@ -266,7 +268,8 @@ export class TwitchBot {
 
   async _handleLurk(channel, username) {
     try {
-      const response = await generateLurkResponse(username);
+      const chatContext = this.chatBuffer.getContext(20);
+      const response = await generateLurkResponse(username, chatContext);
       const trimmed = response.slice(0, 490);
       await this._say(trimmed);
       this.lurkTracker.startLurk(username);
@@ -278,7 +281,8 @@ export class TwitchBot {
 
   async _handleReturn(channel, username) {
     try {
-      const response = await generateReturnResponse(username);
+      const chatContext = this.chatBuffer.getContext(20);
+      const response = await generateReturnResponse(username, chatContext);
       const trimmed = response.slice(0, 490);
       await this._say(trimmed);
       console.log(`[IkaEXE] ${username} returned from lurking`);
@@ -287,9 +291,9 @@ export class TwitchBot {
     }
   }
 
-  async _handleShowstarter() {
+  async _handleShowstarter(stream) {
     try {
-      const response = await generateShowstarter();
+      const response = await generateShowstarter(stream);
       const trimmed = response.slice(0, 490);
       await this._say(trimmed);
       console.log('[IkaEXE] Showstarter fired — stream is live!');
@@ -300,7 +304,8 @@ export class TwitchBot {
 
   async _handleCelebration(type, milestone) {
     try {
-      const response = await generateCelebration(type, milestone);
+      const chatContext = this.chatBuffer.getContext(20);
+      const response = await generateCelebration(type, milestone, chatContext);
       const trimmed = response.slice(0, 490);
       await this._say(trimmed);
       console.log(`[IkaEXE] ${type} milestone ${milestone} celebrated!`);

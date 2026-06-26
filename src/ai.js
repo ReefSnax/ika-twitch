@@ -4,26 +4,64 @@ import { IKA_SYSTEM_PROMPT, CHAT_RESPONSE_SYSTEM_PROMPT } from './persona.js';
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /**
+ * Format chat context into a string for injecting into prompts.
+ */
+function formatChatContext(messages, label) {
+  if (!messages || messages.length === 0) return '';
+  const contextText = messages
+    .map((m) => `${m.username}: ${m.text}`)
+    .join('\n');
+  return `\n\n${label} (${messages.length} messages):\n${contextText}`;
+}
+
+/**
  * Generate a Twitch event response (follow, sub, raid, bits)
- * Uses a single-shot prompt -- no conversation history needed.
+ * Uses a single-shot prompt — no conversation history needed.
+ * @param {string} eventType
+ * @param {object} context — event data plus optional chatContext (array of {username, text})
  */
 export async function generateEventResponse(eventType, context) {
-  const prompts = {
-    follow: `A new follower just joined the channel. Their username is: ${context.username}. Write a short, warm welcome that feels personal. Reference their name naturally and mention something they might enjoy about the Reef — water-type Pokemon, VGC, retro gaming, or shiny hunting. Keep it under 200 characters.`,
+  const { chatContext, ...eventData } = context;
 
-    sub: `${context.username} just subscribed${context.months > 1 ? ` for ${context.months} months` : ''}${context.tier ? ` at Tier ${context.tier}` : ''}. ${context.message ? `Their sub message: "${context.message}"` : 'No sub message.'} Thank them in character.`,
+  let promptBase = '';
 
-    resub: `${context.username} just resubscribed for ${context.months} months${context.streak ? ` (${context.streak} month streak)` : ''}${context.tier ? ` at Tier ${context.tier}` : ''}. ${context.message ? `Their message: "${context.message}"` : ''} Acknowledge the loyalty.`,
+  switch (eventType) {
+    case 'follow':
+      promptBase =
+        `A new follower just joined! Their username is: ${eventData.username}. Write a short, warm welcome that feels personal. Reference their name naturally. Keep it under 200 characters.`;
+      break;
 
-    subgift: `${context.username} just gifted ${context.count} sub${context.count > 1 ? 's' : ''} to the channel${context.recipient ? ` to ${context.recipient}` : ' (random recipients)'}. Thank them for the generosity.`,
+    case 'sub':
+      promptBase =
+        `${eventData.username} just subscribed${eventData.months > 1 ? ` for ${eventData.months} months` : ''}${eventData.tier ? ` at Tier ${eventData.tier}` : ''}. ${eventData.message ? `Their sub message: "${eventData.message}"` : 'No sub message.'} Thank them and acknowledge the support. Keep it under 200 characters.`;
+      break;
 
-    bits: `${context.username} just cheered ${context.amount} bits${context.message ? `. Their message: "${context.message}"` : ''}. Acknowledge the contribution.`,
+    case 'resub':
+      promptBase =
+        `${eventData.username} just resubscribed for ${eventData.months} months${eventData.streak ? ` (${eventData.streak} month streak)` : ''}${eventData.tier ? ` at Tier ${eventData.tier}` : ''}. ${eventData.message ? `Their message: "${eventData.message}"` : ''} Acknowledge their loyalty and thank them. Keep it under 200 characters.`;
+      break;
 
-    raid: `${context.username} is raiding the channel with ${context.viewers} viewer${context.viewers !== 1 ? 's' : ''}. Welcome the raid party. Address ${context.username} directly and welcome their community to the Reef.`,
-  };
+    case 'subgift':
+      promptBase =
+        `${eventData.username} just gifted ${eventData.count} sub${eventData.count > 1 ? 's' : ''}${eventData.recipient ? ` to ${eventData.recipient}` : ' (random recipients)'}. Thank them for the generosity. Keep it under 200 characters.`;
+      break;
 
-  const userPrompt = prompts[eventType];
-  if (!userPrompt) throw new Error(`Unknown event type: ${eventType}`);
+    case 'bits':
+      promptBase =
+        `${eventData.username} just cheered ${eventData.amount} bits${eventData.message ? `. Their message: "${eventData.message}"` : ''}. Acknowledge the contribution and thank them. Keep it under 200 characters.`;
+      break;
+
+    case 'raid':
+      promptBase =
+        `${eventData.username} is raiding with ${eventData.viewers} viewer${eventData.viewers !== 1 ? 's' : ''}! Welcome the raid party and address ${eventData.username} directly. Keep it under 200 characters.`;
+      break;
+
+    default:
+      throw new Error(`Unknown event type: ${eventType}`);
+  }
+
+  const chatSuffix = formatChatContext(chatContext, 'Recent chat vibe');
+  const userPrompt = `${promptBase}${chatSuffix}`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -104,9 +142,12 @@ export async function generateShoutout(data) {
 
 /**
  * Generate a response when someone uses !lurk.
+ * @param {string} username
+ * @param {Array<{username:string,text:string}>} [chatContext] — optional recent chat messages
  */
-export async function generateLurkResponse(username) {
-  const prompt = `${username} just typed !lurk in chat. Write a short, friendly acknowledgment — tell them to enjoy the show from the depths, the reef is glad to have them. Keep it under 200 characters. Make it fresh each time — vary the squid/ocean/reef imagery.`;
+export async function generateLurkResponse(username, chatContext) {
+  const chatSuffix = formatChatContext(chatContext, 'Recent chat vibe');
+  const prompt = `${username} just typed !lurk in chat. Write a short, friendly acknowledgment — let them know their lurking is noted, tell them to enjoy the rest of the stream. Keep it under 200 characters. Vary your phrasing each time — switch up the imagery, don't always default to ocean metaphors.${chatSuffix}`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -119,9 +160,12 @@ export async function generateLurkResponse(username) {
 
 /**
  * Generate a welcome-back message when a lurker speaks again.
+ * @param {string} username
+ * @param {Array<{username:string,text:string}>} [chatContext] — optional recent chat messages
  */
-export async function generateReturnResponse(username) {
-  const prompt = `${username} was lurking and just spoke up again in chat. Write a short, playful "welcome back from the deep" message — acknowledge them surfacing. Keep it under 200 characters. Vary the ocean imagery.`;
+export async function generateReturnResponse(username, chatContext) {
+  const chatSuffix = formatChatContext(chatContext, 'Recent chat vibe');
+  const prompt = `${username} was lurking and just spoke up again in chat. Write a short, playful "welcome back" message — acknowledge them surfacing, but don't default to ocean metaphors every time. Keep it under 200 characters.${chatSuffix}`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -134,9 +178,17 @@ export async function generateReturnResponse(username) {
 
 /**
  * Generate a "we're live!" announcement when the stream starts.
+ * @param {object} [stream] — current stream info {title, game} from Helix API (optional)
  */
-export async function generateShowstarter() {
-  const prompt = `The stream just went live! Write a short, energetic "we're live" announcement. Mention it's ReefSnax — Water-type Gym Leader — streaming Pokemon VGC, shiny hunting, or retro games. Welcome viewers old and new to the Reef. Keep it under 300 characters. Don't use the phrase "signal is green" or any variation.`;
+export async function generateShowstarter(stream) {
+  let prompt;
+  if (stream) {
+    prompt =
+      `The stream just went live! Snax is playing "${stream.game}" — "${stream.title}". Write a short, energetic announcement welcoming viewers old and new. Reference the game naturally. Keep it under 300 characters. Don't use the phrase "signal is green" or any variation.`;
+  } else {
+    prompt =
+      `The stream just went live! Write a short, energetic "we're live" announcement welcoming viewers old and new. Keep it under 300 characters. Don't use the phrase "signal is green" or any variation.`;
+  }
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -151,10 +203,12 @@ export async function generateShowstarter() {
  * Generate a milestone celebration message.
  * @param {'follow'|'sub'} type
  * @param {number} milestone — the number reached
+ * @param {Array<{username:string,text:string}>} [chatContext] — optional recent chat messages
  */
-export async function generateCelebration(type, milestone) {
+export async function generateCelebration(type, milestone, chatContext) {
   const label = type === 'follow' ? 'followers' : 'subscribers';
-  const prompt = `Celebration time! The channel just reached ${milestone} ${label}! Write a short, excited message thanking the community and acknowledging this milestone. Keep it under 300 characters. Make it feel genuine, not corporate.`;
+  const chatSuffix = formatChatContext(chatContext, 'Recent chat vibe');
+  const prompt = `Celebration time! The channel just reached ${milestone} ${label}! Write a short, excited message thanking the community and acknowledging this milestone. Keep it under 300 characters. Make it feel genuine, not corporate.${chatSuffix}`;
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
